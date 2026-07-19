@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pomodoro Timer</title>
+
+  <!-- React + ReactDOM + Babel (для JSX) через CDN -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    :root {
+      --bg: #1e1e2e;
+      --card: #2a2a3c;
+      --text: #f4f4f8;
+      --muted: #a0a0b8;
+      --accent: #ef4444;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      transition: background 0.4s ease;
+      padding: 20px;
+    }
+
+    .app {
+      width: 100%;
+      max-width: 420px;
+      background: var(--card);
+      border-radius: 24px;
+      padding: 32px 28px 36px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+      text-align: center;
+    }
+
+    .app h1 {
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      margin-bottom: 24px;
+      color: var(--muted);
+    }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      background: rgba(0, 0, 0, 0.2);
+      padding: 6px;
+      border-radius: 14px;
+      margin-bottom: 32px;
+    }
+
+    .tab {
+      flex: 1;
+      padding: 10px 6px;
+      border: none;
+      border-radius: 10px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .tab.active {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .timer-wrap {
+      position: relative;
+      width: 260px;
+      height: 260px;
+      margin: 0 auto 32px;
+    }
+
+    .timer-wrap svg { transform: rotate(-90deg); }
+
+    .ring-bg { stroke: rgba(255, 255, 255, 0.08); }
+
+    .ring-fg {
+      stroke: var(--accent);
+      stroke-linecap: round;
+      transition: stroke-dashoffset 0.5s linear, stroke 0.4s ease;
+    }
+
+    .time {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .time .digits {
+      font-size: 60px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 2px;
+    }
+
+    .time .state {
+      margin-top: 4px;
+      font-size: 13px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+    }
+
+    .controls {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+    }
+
+    .btn {
+      border: none;
+      border-radius: 12px;
+      padding: 14px 28px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.1s ease, opacity 0.2s ease, background 0.2s ease;
+    }
+    .btn:active { transform: scale(0.96); }
+
+    .btn-primary { background: var(--accent); color: #fff; min-width: 130px; }
+    .btn-secondary {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+    }
+    .btn-secondary:hover { color: var(--text); }
+
+    .counter {
+      margin-top: 24px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .counter b { color: var(--text); }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // Режимы таймера: длительность в минутах и акцентный цвет
+    const MODES = {
+      pomodoro: { label: "Помидор",           minutes: 25, color: "#ef4444", bg: "#2a1e28" },
+      short:    { label: "Короткий перерыв",   minutes: 5,  color: "#22c55e", bg: "#1e2a24" },
+      long:     { label: "Длинный перерыв",    minutes: 15, color: "#3b82f6", bg: "#1e2432" },
+    };
+
+    const RADIUS = 118;
+    const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
+
+    // Короткий сигнал по окончании через Web Audio (без внешних файлов)
+    function playBeep() {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = "sine";
+        osc.frequency.value = 880;
+        gain.gain.setValueAtTime(0.001, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.4, ctx.currentTime + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.6);
+      } catch (e) { /* звук недоступен — не критично */ }
+    }
+
+    function App() {
+      const [modeKey, setModeKey] = useState("pomodoro");
+      const [secondsLeft, setSecondsLeft] = useState(MODES.pomodoro.minutes * 60);
+      const [isRunning, setIsRunning] = useState(false);
+      const [completed, setCompleted] = useState(0);
+
+      const mode = MODES[modeKey];
+      const total = mode.minutes * 60;
+
+      // Тик таймера раз в секунду, пока запущен
+      useEffect(() => {
+        if (!isRunning) return;
+        const id = setInterval(() => {
+          setSecondsLeft((s) => (s <= 1 ? 0 : s - 1));
+        }, 1000);
+        return () => clearInterval(id);
+      }, [isRunning]);
+
+      // Обработка окончания: стоп, сигнал, счётчик помидоров
+      useEffect(() => {
+        if (secondsLeft === 0 && isRunning) {
+          setIsRunning(false);
+          playBeep();
+          if (modeKey === "pomodoro") setCompleted((c) => c + 1);
+        }
+      }, [secondsLeft, isRunning, modeKey]);
+
+      // Обновляем заголовок вкладки и акцентный цвет темы
+      useEffect(() => {
+        document.documentElement.style.setProperty("--accent", mode.color);
+        document.body.style.background = mode.bg;
+        document.title = isRunning
+          ? `${formatTime(secondsLeft)} — ${mode.label}`
+          : "Pomodoro Timer";
+      }, [secondsLeft, isRunning, mode]);
+
+      // Пробел — старт/пауза
+      useEffect(() => {
+        const onKey = (e) => {
+          if (e.code === "Space") { e.preventDefault(); toggle(); }
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+      });
+
+      function switchMode(key) {
+        setModeKey(key);
+        setSecondsLeft(MODES[key].minutes * 60);
+        setIsRunning(false);
+      }
+
+      function toggle() { setIsRunning((r) => !r); }
+
+      function reset() {
+        setIsRunning(false);
+        setSecondsLeft(total);
+      }
+
+      const offset = CIRCUMFERENCE * (1 - secondsLeft / total);
+
+      return (
+        <div className="app">
+          <h1>🍅 POMODORO</h1>
+
+          <div className="tabs">
+            {Object.keys(MODES).map((key) => (
+              <button
+                key={key}
+                className={"tab" + (key === modeKey ? " active" : "")}
+                onClick={() => switchMode(key)}
+              >
+                {MODES[key].label}
+              </button>
+            ))}
+          </div>
+
+          <div className="timer-wrap">
+            <svg width="260" height="260">
+              <circle className="ring-bg" cx="130" cy="130" r={RADIUS} fill="none" strokeWidth="10" />
+              <circle
+                className="ring-fg"
+                cx="130" cy="130" r={RADIUS} fill="none" strokeWidth="10"
+                strokeDasharray={CIRCUMFERENCE}
+                strokeDashoffset={offset}
+              />
+            </svg>
+            <div className="time">
+              <div className="digits">{formatTime(secondsLeft)}</div>
+              <div className="state">{isRunning ? "Идёт" : "Пауза"}</div>
+            </div>
+          </div>
+
+          <div className="controls">
+            <button className="btn btn-primary" onClick={toggle}>
+              {isRunning ? "Пауза" : "Старт"}
+            </button>
+            <button className="btn btn-secondary" onClick={reset}>
+              Сброс
+            </button>
+          </div>
+
+          <div className="counter">
+            Завершено помидоров: <b>{completed}</b>
+          </div>
+        </div>
+      );
+    }
+
+    function formatTime(totalSeconds) {
+      const m = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
+      const s = String(totalSeconds % 60).padStart(2, "0");
+      return `${m}:${s}`;
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
