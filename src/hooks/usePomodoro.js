@@ -8,6 +8,7 @@ export function usePomodoro() {
   const [secondsLeft, setSecondsLeft] = useState(MODES.pomodoro.minutes * 60)
   const [isRunning, setIsRunning] = useState(false)
   const [completed, setCompleted] = useState(0)
+  const [resetNonce, setResetNonce] = useState(0) // растёт при каждом сбросе
 
   const mode = MODES[modeKey]
   const totalSeconds = mode.minutes * 60
@@ -47,6 +48,7 @@ export function usePomodoro() {
   const reset = useCallback(() => {
     setIsRunning(false)
     setSecondsLeft(MODES[modeKey].minutes * 60)
+    setResetNonce((prev) => prev + 1)
   }, [modeKey])
 
   return {
@@ -56,6 +58,7 @@ export function usePomodoro() {
     totalSeconds,
     isRunning,
     completed,
+    resetNonce,
     selectMode,
     toggle,
     reset,
